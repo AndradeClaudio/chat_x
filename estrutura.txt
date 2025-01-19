@@ -1,0 +1,20 @@
+.
+├── README.md
+├── estrutura.txt
+├── hello.py
+├── pyproject.toml
+├── src
+│   └── app
+│       ├── agents
+│       │   └── orchestrator.py
+│       ├── client.py
+│       ├── genai.proto
+│       ├── genai_pb2.py
+│       ├── genai_pb2_grpc.py
+│       ├── main.py
+│       └── server.py
+├── tests
+│   └── test_genai.py
+└── uv.lock
+
+5 directories, 13 files
