@@ -1,7 +1,7 @@
 FROM ubuntu:24.10 AS base
 ARG DEBIAN_FRONTEND=noninteractive
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
-RUN apt-get update &&  apt-get install -y g++ build-essential && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN apt-get update &&  apt-get install -y g++ build-essential python3.12 && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 FROM base AS builder
 COPY --from=ghcr.io/astral-sh/uv:0.5.13 /uv /bin/uv
@@ -18,6 +18,5 @@ COPY --from=builder /app /app
 ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8580
 WORKDIR /app
-COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 CMD ["/app/start.sh"]
