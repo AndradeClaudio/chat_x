@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chat_x
+  labels:
+    app: uv-streamlit
+spec:
+  replicas: 2 # Número de réplicas
+  selector:
+    matchLabels:
+      app: chat_x
+  template:
+    metadata:
+      labels:
+        app: chat_x
+    spec:
+      containers:
+      - name: chat_x
+        image: chat_x:1.0 # Substitua pela imagem publicada
+        ports:
+        - containerPort: 8580
+        env:
+        - name: UV_COMPILE_BYTECODE
+          value: "1"
+        - name: UV_LINK_MODE
+          value: "copy"
+        command: ["streamlit", "run", "src/app/main.py", "--server.port", "8580"]
+        volumeMounts:
+        - name: cache-volume
+          mountPath: /root/.cache/uv
+      volumes:
+      - name: cache-volume
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: uv-streamlit-service
+spec:
+  selector:
+    app: uv-streamlit
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8580
+  type: LoadBalancer 

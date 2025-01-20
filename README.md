@@ -22,6 +22,7 @@ Este projeto é um aplicativo de chat que utiliza várias tecnologias e bibliote
 - Foi iniciada a implementação de uma rotina de testes. Contudo, o número de testes ainda é limitado devido à restrição de tempo.
 - Gestão dos tokens pelo LangSmith. 
 - Contorle de acesso tem objetivo de carregar o chat anterior e limitar a quantidade de requisição. 
+- O serviço subiu em uma máquina EC2 em um ambiente docker. Nâo consigui em tempo hábil configurar os kubernets. 
 
 
 ## Estrutura do Projeto
