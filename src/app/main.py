@@ -1,131 +1,131 @@
-import os
-from flask import Flask, request, jsonify
+# main.py
 
-# Imports LangChain (para agents, chains, etc.)
-from langchain.agents import Tool, AgentExecutor, initialize_agent
-from langchain.chat_models import ChatOpenAI
-from langchain.prompts import PromptTemplate
-from langchain.memory import ConversationBufferMemory
+import streamlit as st
+import asyncio
+import logging
+from auth import AuthManager
+from grpc_client import GRPCClient
+from message_handler import MessageHandler
+from utils import initialize_session, setup_logging
 
-# LangGraph - aqui seria para orquestrar e visualizar fluxos.
-# No exemplo, usaremos apenas a notação para integrar depois.
-# from langgraph import some_graph_library (Placeholder)
+# Configuração do logging
+logger = setup_logging()
+logger.info("Aplicativo Chat X iniciado.")
 
-#################################################
-# Mock do LlamaGuard (placeholder de moderação) #
-#################################################
+# Constantes
+USER_AVATAR = "🧑‍⚕️"
+BOT_AVATAR = "🤖"
 
-def llama_guard_moderation(content: str) -> bool:
+
+def main():
+    """Função principal que executa a aplicação Chat X.
+
+    Configura a interface de usuário, gerencia o fluxo de autenticação e interação no chat.
     """
-    Retorna True se o conteúdo estiver permitido, False caso contrário.
-    Aqui é um mock simples. Em produção, integraria com LlamaGuard de fato.
-    """
-    blocked_words = ["ofensa", "palavrão", "terrorismo"]  # Exemplo
-    for bw in blocked_words:
-        if bw in content.lower():
-            return False
-    return True
+    # Inicialização da sessão
+    initialize_session()
 
-###################################
-# Agente de Busca (Tool / Action) #
-###################################
+    # Títulos
+    st.title("Chat X - Onde podemos conversar de Quase Tudo")
+    st.sidebar.title("Chat X")
+    st.sidebar.markdown("---")
+    st.sidebar.header("Você é novo por aqui?")
 
-def search_tool(query: str) -> str:
-    """
-    Função que simula uma busca. Em produção, integrar com Google, Bing ou outro.
-    Para este exemplo, retorna apenas um texto fixo ou simula resultados.
-    """
-    # Exemplo simples: imagine que consultamos um backend ou API, retornando máx 10 resultados.
-    # Aqui, retornaremos uma string como se fosse um conjunto de resultados.
-    fake_results = [
-        "Resultado 1 sobre o assunto: ...",
-        "Resultado 2 sobre o assunto: ...",
-        "Resultado 3 sobre o assunto: ...",
-        # ...
-    ]
-    # Limitar a 10 resultados
-    results_limited = fake_results[:10]
-    return "\n".join(results_limited)
+    # Instâncias das classes
+    auth_manager = AuthManager()
+    grpc_client = GRPCClient()
 
-search_tool_action = Tool(
-    name="search_tool",
-    func=search_tool,
-    description="Use esta ferramenta para buscar informações externas quando necessário. Limite de 10 resultados."
-)
+    # Opções de autenticação
+    auth_option = st.sidebar.radio(
+        "Opção de Login:",
+        ["Use seu e-mail de registro", "Novo Usuário"]
+    )
 
-###########################################
-# Agente Conversacional (LangChain Agent) #
-###########################################
+    # Fluxo de autenticação
+    if not st.session_state.is_logged_in:
+        if auth_option == "Novo Usuário":
+            user_email_input = st.sidebar.text_input("Digite seu e-mail")
+            if st.sidebar.button("Registrar"):
+                user_email = user_email_input.strip()
+                if user_email:
+                    logger.info(f"Solicitação de registro para o e-mail: {user_email}")
+                    success = auth_manager.register_user(email=user_email)
+                    if success:
+                        st.sidebar.success("Registro bem-sucedido!")
+                        st.session_state.is_logged_in = True
+                        st.session_state.useremail = user_email
+                        logger.info(f"Usuário {user_email} registrado e logado com sucesso.")
+                    else:
+                        st.sidebar.error("Falha no registro. O e-mail já está registrado?")
+                        logger.warning(f"Falha no registro para o e-mail: {user_email}")
+                else:
+                    st.sidebar.error("Por favor, insira um e-mail válido.")
+                    logger.warning("Tentativa de registro com e-mail vazio.")
+        else:
+            user_email_input = st.sidebar.text_input("Digite seu e-mail")
+            if st.sidebar.button("Login"):
+                user_email = user_email_input.strip()
+                if user_email:
+                    logger.info(f"Solicitação de login para o e-mail: {user_email}")
+                    if auth_manager.login_user(email=user_email):
+                        st.sidebar.success("Login bem-sucedido!")
+                        st.session_state.is_logged_in = True
+                        st.session_state.useremail = user_email
+                        logger.info(f"Usuário {user_email} autenticado e logado com sucesso.")
+                    else:
+                        st.sidebar.error("Credenciais inválidas. Tente novamente.")
+                        logger.warning(f"Falha na autenticação para o e-mail: {user_email}")
+                else:
+                    st.sidebar.error("Por favor, insira um e-mail válido.")
+                    logger.warning("Tentativa de login com e-mail vazio.")
 
-# Prompt base do agente, incluindo regra sobre Engenharia Civil
-base_prompt = """
-Você é um agente conversacional especializado em responder qualquer pergunta, 
-EXCETO sobre Engenharia Civil. Se o tema for Engenharia Civil, você deve recusar.
-Se precisar de informações extras de uma fonte externa, utilize a ferramenta 'search_tool'.
-"""
+    # Interface do chat
+    if st.session_state.is_logged_in:
+        st.sidebar.empty()  # Limpa a sidebar após login
+        logger.debug(f"Exibindo interface de chat para o usuário {st.session_state.useremail}.")
 
-prompt = PromptTemplate(
-    template=base_prompt,
-    input_variables=[]
-)
+        # Instância do manipulador de mensagens
+        message_handler = MessageHandler(user_email=st.session_state.useremail)
 
-# Configuração do modelo (exemplo com ChatOpenAI)
-# Em produção, configure chave e versão adequadas (OpenAI, Azure, etc.)
-chat_model = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
+        # Exibir informações do usuário
+        st.sidebar.text(f"Usuário: {st.session_state.useremail}")
+        st.sidebar.text(f"Sua cota de prompt é: {message_handler.get_message_limit()}")
 
-# Memória de conversa, para manter contexto de maneira simples
-memory = ConversationBufferMemory(
-    memory_key="chat_history",
-    return_messages=True
-)
+        # Carregar e exibir mensagens
+        messages = message_handler.load_user_messages()
+        for message in messages:
+            avatar = USER_AVATAR if message["role"] == "user" else BOT_AVATAR
+            with st.chat_message(message["role"], avatar=avatar):
+                st.markdown(message["content"])
 
-# Inicializa o agente com a ferramenta de busca
-conversational_agent = initialize_agent(
-    tools=[search_tool_action],
-    llm=chat_model,
-    agent="chat-conversational-react-description",  # Exemplo de agente
-    verbose=True,
-    memory=memory,
-    # Caso queira passar um PromptTemplate custom:
-    # prompt=...
-)
+        # Input de novas mensagens
+        user_question = st.chat_input("Como posso te ajudar?")
+        if user_question:
+            logger.info(f"Usuário {st.session_state.useremail} enviou uma pergunta: {user_question}")
+            # Salvar e exibir a mensagem do usuário
+            message_handler.save_user_message(user_question)
+            messages.append({"role": "user", "content": user_question})
+            with st.chat_message("user", avatar=USER_AVATAR):
+                st.markdown(user_question)
 
-#################
-# Criação Flask #
-#################
-
-app = Flask(__name__)
-
-@app.route("/ask", methods=["POST"])
-def ask_agent():
-    """
-    Endpoint principal: recebe JSON com a pergunta do usuário,
-    passa ao agente conversacional, e retorna resposta em JSON.
-    """
-    data = request.get_json()
-    user_question = data.get("question", "")
-
-    # 1. Verifica moderação da entrada (exemplo)
-    if not llama_guard_moderation(user_question):
-        return jsonify({"answer": "Desculpe, a pergunta contém conteúdo bloqueado."}), 400
-
-    # 2. Verifica se é sobre Engenharia Civil (bloqueia explicitamente)
-    if "engenharia civil" in user_question.lower():
-        return jsonify({"answer": "Desculpe, não estou habilitado a falar sobre Engenharia Civil."})
-
-    # 3. Caso permitido, passa a pergunta ao agente conversacional
-    try:
-        response = conversational_agent.run(user_question)
-    except Exception as e:
-        return jsonify({"answer": f"Erro ao processar a solicitação: {str(e)}"}), 500
-
-    # 4. Verifica moderação da resposta (se quiser moderar a saída também)
-    if not llama_guard_moderation(response):
-        return jsonify({"answer": "Desculpe, a resposta contém conteúdo bloqueado."}), 400
-
-    return jsonify({"answer": response})
+            # Processar e exibir a resposta do assistente
+            with st.chat_message("assistant", avatar=BOT_AVATAR):
+                message_placeholder = st.empty()
+                with st.spinner("Processando..."):
+                    try:
+                        response = asyncio.run(grpc_client.ask_question(user_question))
+                        logger.info(f"Resposta recebida para a pergunta '{user_question}': {response}")
+                    except Exception as e:
+                        response = "Desculpe, ocorreu um erro ao processar sua pergunta."
+                        logger.error(f"Erro ao obter resposta para a pergunta '{user_question}': {e}", exc_info=True)
+                message_handler.save_assistant_message(response)
+                message_placeholder.markdown(response)
+                messages.append({"role": "assistant", "content": response})
+                message_handler.update_counter()
+    else:
+        st.error("Por favor, faça o login para continuar.")
+        logger.info("Acesso negado: usuário não autenticado.")
 
 
 if __name__ == "__main__":
-    # Em produção, pode-se usar gunicorn ou outro WSGI server
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=True)
+    main()

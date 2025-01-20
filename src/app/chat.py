@@ -23,9 +23,7 @@ async def question(user_question):
     async with aio.insecure_channel("localhost:50051") as channel:
         stub = genai_pb2_grpc.GenAiServiceStub(channel)
         request = genai_pb2.QuestionRequest(question=user_question)
-        print("Enviando pergunta para o servidor...")
         response = await stub.AskQuestion(request)
-        print("Resposta do servidor:", response.answer)
         return {"resposta": response.answer}
 
 st.title("Chat X - Onde podemos conversar de Quase Tudo ")
