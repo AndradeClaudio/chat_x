@@ -31,6 +31,15 @@ def initialize_database():
         counter INTEGER DEFAULT 0
     )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            useremail TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
 
     conn.commit()
     conn.close()
@@ -150,6 +159,23 @@ def update_limit_counter(useremail: str, new_counter: int):
             return "Error occurred while updating counter"
     else:
         return "Limit reached!"
+def save_message(useremail, role, content):
+    conn = sqlite3.connect(DATABASE_FILE)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO messages (useremail, role, content) VALUES (?, ?, ?)
+    """, (useremail, role, content))
+    conn.commit()
+    conn.close()
 
+def load_messages(useremail):
+    conn = sqlite3.connect(DATABASE_FILE)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT role, content FROM messages WHERE useremail = ? ORDER BY timestamp ASC
+    """, (useremail,))
+    messages = cursor.fetchall()
+    conn.close()
+    return [{"role": role, "content": content} for role, content in messages]
 # Inicializa o banco de dados
 initialize_database()

@@ -1,0 +1,23 @@
+models:
+ - type: main
+   engine: openai
+   model: gpt-4o-mini   
+   temperature: 0.1
+   
+
+instructions:
+  - type: general
+    content: |
+      Below is a conversation between a user and a bot called V.
+      V Talking in portuguese brazilian.
+      V is designed to assist users on various topics.
+
+
+rails:
+  input:
+    flows:
+      - self check input
+  output:
+    flows:
+      - self check output
+      - check blocked terms

@@ -5,7 +5,7 @@ from grpc import aio
 import genai_pb2
 import genai_pb2_grpc
 
-    async def main():
+async def main():
         async with aio.insecure_channel("localhost:50051") as channel:
             stub = genai_pb2_grpc.GenAiServiceStub(channel)
             user_question = "Qual a capital da França?"

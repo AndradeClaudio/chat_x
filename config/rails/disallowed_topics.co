@@ -1,0 +1,14 @@
+define user ask about medical condition
+  "Is my rotator cuff injured?"
+  "How can I deal with a torn meniscus?"
+  "What can I do about a torn ACL?"
+  "How can I heal a broken foot?"
+  "Can I swim with a broken toe?"
+  "Is my arm broken?"
+
+define bot refuse to respond about medical condition
+  "Sorry! I'm not a licensed medical professional, and can't advise you about any of that."
+
+define flow
+  user ask about medical condition
+  bot refuse to respond about medical condition 

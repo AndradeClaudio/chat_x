@@ -1,42 +1,64 @@
 import asyncio
-import grpc
 from grpc import aio  # A API assíncrona do gRPC
 
 import genai_pb2
 import genai_pb2_grpc
 
-# Imports LangChain
 from langchain.agents import Tool, initialize_agent
 from langchain.chat_models import ChatOpenAI
 from langchain.memory import ConversationBufferMemory
+from langchain.tools import Tool
+from nemoguardrails import RailsConfig, LLMRails
+from langchain.tools import DuckDuckGoSearchRun
 
-#######################
-# Mock de LlamaGuard  #
-#######################
-def llama_guard_moderation(content: str) -> bool:
-    """
-    Retorna True se conteúdo for permitido, False caso contrário.
-    """
-    blocked_words = ["ofensa", "palavrão", "terrorismo"]
-    for bw in blocked_words:
-        if bw in content.lower():
-            return False
+# Inicializa a ferramenta de busca
+duckduckgo = DuckDuckGoSearchRun()
+
+
+# Inicializa a configuração do Rails
+rails_config = RailsConfig.from_path("./config")
+rails = LLMRails(rails_config)
+
+# Função para usar o LLMRails sem `nest_asyncio`
+async def guard_moderation_async(consulta: str, bot: bool) -> bool:
+    tipo = "bot" if bot else "user"
+    response = await rails.generate_async(
+        messages=[
+            {
+                "role": tipo,
+                "content": consulta,
+            }
+        ]
+    )
+    info = rails.explain()
+    if "bot refuse" in info.colang_history:
+        return False
     return True
+
+
+# Função síncrona para lidar com ambientes que não são totalmente assíncronos
+def guard_moderation(consulta: str, bot: bool) -> bool:
+    return asyncio.run(guard_moderation_async(consulta, bot))
+
 
 ########################
 # Função de busca mock #
 ########################
 def search_tool(query: str) -> str:
     """
-    Simula uma busca e retorna até 10 resultados (mock).
+    Executa uma busca usando DuckDuckGo de forma assíncrona
+    e retorna até 10 resultados.
     """
-    fake_results = [
-        "Resultado 1 sobre o assunto...",
-        "Resultado 2 sobre o assunto...",
-        "Resultado 3 sobre o assunto..."
-    ]
-    results_limited = fake_results[:10]
-    return "\n".join(results_limited)
+    # 'duckduckgo.run(query)' é síncrono, então usamos 'asyncio.to_thread'
+    results =  asyncio.to_thread(duckduckgo.run, query)
+
+    # Se 'results' vier em formato de string com várias linhas,
+    # você pode dividir por quebras de linha e limitar a 10
+    lines = results.split('\n')[:10]
+
+    # Caso queira juntar de volta em uma única string
+    return "\n".join(lines)
+
 
 search_tool_action = Tool(
     name="search_tool",
@@ -51,10 +73,10 @@ base_prompt = """
 Você é um agente conversacional especializado em responder qualquer pergunta,
 EXCETO sobre Engenharia Civil. Se for Engenharia Civil, recuse.
 Se precisar de informações adicionais, use a ferramenta 'search_tool'.
+Para assuntos atuais, use a ferramenta 'search_tool'.
 """
 
 chat_model = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
-
 
 memory = ConversationBufferMemory(
     memory_key="chat_history",
@@ -80,35 +102,17 @@ class GenAiServiceServicer(genai_pb2_grpc.GenAiServiceServicer):
         user_question = request.question
 
         # Moderação inicial
-        if not llama_guard_moderation(user_question):
+        if not await guard_moderation_async(user_question, bot=False):
             return genai_pb2.AnswerResponse(
                 answer="Desculpe, sua pergunta contém conteúdo bloqueado."
             )
-
-        # Bloqueio sobre Engenharia Civil
-        if "engenharia civil" in user_question.lower():
-            return genai_pb2.AnswerResponse(
-                answer="Desculpe, não estou habilitado a falar sobre Engenharia Civil."
-            )
-
         try:
-            # No LangChain atual, a chamada .run() em si não é async.
-            # Se você tiver um LLM ou ferramenta I/O-bound e um wrapper async, poderia usar await. 
-            # Aqui seguimos com a chamada síncrona mas dentro de um método gRPC assíncrono.
-            response_text = conversational_agent.run(user_question)
+            response_text = conversational_agent.invoke(user_question)
         except Exception as e:
             return genai_pb2.AnswerResponse(
                 answer=f"Erro ao processar a solicitação: {str(e)}"
             )
-
-        # Moderação da resposta
-        if not llama_guard_moderation(response_text):
-            return genai_pb2.AnswerResponse(
-                answer="Desculpe, a resposta contém conteúdo bloqueado."
-            )
-
-        return genai_pb2.AnswerResponse(answer=response_text)
-
+        return genai_pb2.AnswerResponse(answer=response_text['output'])
 
 async def serve():
     server = aio.server()
@@ -121,7 +125,5 @@ async def serve():
     print(f"Servidor gRPC (assíncrono) iniciado em {listen_addr}")
     # Mantém o servidor rodando até ser interrompido
     await server.wait_for_termination()
-
-
 if __name__ == "__main__":
     asyncio.run(serve())
