@@ -25,6 +25,9 @@ Este projeto é um aplicativo de chat que utiliza várias tecnologias e bibliote
 - O serviço subiu em uma máquina EC2 em um ambiente docker. Nâo consigui em tempo hábil configurar os kubernets. 
 
 
+![](videos/apresentacao.gif)
+![](videos/apresentacao2.gif)
+
 ## Estrutura do Projeto
 
 ```txt
