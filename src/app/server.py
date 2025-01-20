@@ -11,15 +11,20 @@ from langchain.tools import Tool
 from nemoguardrails import RailsConfig, LLMRails
 from langchain.tools import DuckDuckGoSearchRun
 
-# Inicializa a ferramenta de busca
-duckduckgo = DuckDuckGoSearchRun()
+from typing import Dict, TypedDict
+from langgraph.graph import StateGraph, END
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+from duckduckgo_search import DDGS
+from langchain_core.runnables.graph import MermaidDrawMethod
+from dotenv import load_dotenv
+
 
 
 # Inicializa a configuração do Rails
 rails_config = RailsConfig.from_path("./config")
 rails = LLMRails(rails_config)
 
-# Função para usar o LLMRails sem `nest_asyncio`
 async def guard_moderation_async(consulta: str, bot: bool) -> bool:
     tipo = "bot" if bot else "user"
     response = await rails.generate_async(
@@ -40,56 +45,200 @@ async def guard_moderation_async(consulta: str, bot: bool) -> bool:
 def guard_moderation(consulta: str, bot: bool) -> bool:
     return asyncio.run(guard_moderation_async(consulta, bot))
 
+class State(TypedDict):
+    query: str
+    categoria: str
+    resposta: str
+    history: str  # Novo campo para armazenar o histórico de mensagens
 
-########################
-# Função de busca mock #
-########################
-def search_tool(query: str) -> str:
+# ------------------------------------------------------------------------------------
+# Funções de suporte
+# ------------------------------------------------------------------------------------
+def format_history(messages) -> str:
     """
-    Executa uma busca usando DuckDuckGo de forma assíncrona
-    e retorna até 10 resultados.
+    Converte a lista de mensagens do chat em uma string única,
+    para fornecer ao modelo como contexto.
     """
-    # 'duckduckgo.run(query)' é síncrono, então usamos 'asyncio.to_thread'
-    results =  asyncio.to_thread(duckduckgo.run, query)
+    formatted = []
+    for msg in messages:
+        role = "Usuário" if msg["role"] == "user" else "Assistente"
+        formatted.append(f"{role}: {msg['content']}")
+    return "\n".join(formatted)
 
-    # Se 'results' vier em formato de string com várias linhas,
-    # você pode dividir por quebras de linha e limitar a 10
-    lines = results.split('\n')[:10]
+def web_search(query: str) -> str:
+    """
+    Obtém informações gerais usando o DuckDuckGo.
+    Pode ser usado para complementar conhecimento em perguntas complexas.
+    """
+    # Realiza a pesquisa no DuckDuckGo, retornando no máximo 5 resultados
+    results = DDGS().text(query, max_results=10)
+    
+    # Monta a string de contexto
+    contexts = "\n---\n".join(
+        ["\n".join([item["title"], item["body"], item["href"]]) for item in results]
+    )
+    return contexts
 
-    # Caso queira juntar de volta em uma única string
-    return "\n".join(lines)
+# ------------------------------------------------------------------------------------
+# Funções de nós do fluxo (grafo)
+# ------------------------------------------------------------------------------------
+def categorize(state: State) -> State:
+    """
+    Categoriza a consulta do cliente em 'simples' ou 'complexa'.
+    Agora, consideramos também o histórico de mensagens no prompt, caso seja útil.
+    """
+    prompt = ChatPromptTemplate.from_template(
+    """
+    Você deve analisar a seguinte conversa (histórico) e a última pergunta do usuário
+    para decidir se a consulta é 'simples' ou 'complexa'.
 
+    Histórico da conversa:
+    {history}
 
-search_tool_action = Tool(
-    name="search_tool",
-    func=search_tool,
-    description="Ferramenta para buscar informações externas (máx 10 resultados)."
+    Última consulta do usuário:
+    {query}
+
+    Instrução:
+    - Sempre que você for relacionada ‘dia’, ‘hora’, ‘mês’, ‘ano’, ou termos relacionados a tempo, responda "complexa”
+    - se for uma pergunta relacionado aos ultimos 2 anos responda "complexa".
+    - Se for um tema complexo, responda "complexa".
+    - Se for uma simples conversa informal, responda "simples".
+    - Responda APENAS com 'simples' ou 'complexa'.
+    """
+    )
+    chain = prompt | ChatOpenAI(temperature=0, model="gpt-4o-mini")
+    categoria = chain.invoke({
+        "history": state["history"],
+        "query": state["query"]
+    }).content.strip().lower()
+    print(categoria)
+    return {"categoria": categoria}
+
+def handle_technical(state: State) -> State:
+    """
+    Fornece uma resposta 'simples' para a consulta, levando em conta o histórico.
+    """
+    prompt = ChatPromptTemplate.from_template(
+        """
+        Você é um assistente que deve considerar o histórico de conversa abaixo
+        e a nova pergunta do usuário. Forneça a melhor resposta possível para
+        questões consideradas 'simples'.
+
+        Histórico da conversa:
+        {history}
+
+        Pergunta atual:
+        {query}
+
+        Responda de maneira objetiva e clara.
+        """
+    )
+    chain = prompt | ChatOpenAI(temperature=0, model="gpt-4o-mini")
+    resposta = chain.invoke({
+        "history": state["history"],
+        "query": state["query"]
+    }).content
+    return {"resposta": resposta}
+
+def handle_web_search(state: State) -> State:
+    """
+    Node responsável por buscar informações na web e gerar uma resposta usando o LLM
+    para questões consideradas 'complexas'.
+    """
+    # Realiza a pesquisa usando DuckDuckGo
+    search_content = web_search(state["query"])
+    
+    prompt = ChatPromptTemplate.from_template(
+        """
+        Você obteve as seguintes informações de uma pesquisa na web:
+        {search_content}
+
+        Aqui está o histórico da conversa:
+        {history}
+
+        Com base nisso, responda de forma objetiva a pergunta do usuário:
+        {query}
+        """
+    )
+    chain = prompt | ChatOpenAI(temperature=0, model="gpt-4o-mini")
+    resposta = chain.invoke({
+        "search_content": search_content,
+        "history": state["history"],
+        "query": state["query"]
+    }).content
+
+    return {"resposta": resposta}
+
+def route_query(state: State) -> str:
+    """
+    Roteia a consulta para o nó de resposta simples ou para o nó que faz pesquisa,
+    com base na categoria definida na função 'categorize'.
+    """
+    if state["categoria"] == "simples":
+        return "handle_technical"
+    else:
+        return "handle_web_search"
+
+# ------------------------------------------------------------------------------------
+# Construindo o fluxo (grafo)
+# ------------------------------------------------------------------------------------
+workflow = StateGraph(State)
+
+# Adicionar nós
+workflow.add_node("categorize", categorize)
+workflow.add_node("handle_technical", handle_technical)
+workflow.add_node("handle_web_search", handle_web_search)
+
+# Adicionar transições condicionais
+workflow.add_conditional_edges(
+    "categorize",
+    route_query,
+    {
+        "handle_technical": "handle_technical",
+        "handle_web_search": "handle_web_search",
+    }
 )
 
-#######################################
-# Cria o Agente Conversacional        #
-#######################################
-base_prompt = """
-Você é um agente conversacional especializado em responder qualquer pergunta,
-EXCETO sobre Engenharia Civil. Se for Engenharia Civil, recuse.
-Se precisar de informações adicionais, use a ferramenta 'search_tool'.
-Para assuntos atuais, use a ferramenta 'search_tool'.
-"""
+# Encerrar o fluxo
+workflow.add_edge("handle_technical", END)
+workflow.add_edge("handle_web_search", END)
 
-chat_model = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
+# Definir o ponto de entrada do fluxo
+workflow.set_entry_point("categorize")
 
-memory = ConversationBufferMemory(
-    memory_key="chat_history",
-    return_messages=True  # para evitar erros com chat-conversational
+# Compilar o grafo
+app = workflow.compile()
+
+# (Opcional) Desenha a estrutura do grafo como imagem
+app.get_graph().draw_mermaid_png(
+    draw_method=MermaidDrawMethod.API,
 )
 
-conversational_agent = initialize_agent(
-    tools=[search_tool_action],
-    llm=chat_model,
-    agent="chat-conversational-react-description",
-    verbose=False,
-    memory=memory,
-)
+# ------------------------------------------------------------------------------------
+# Função para executar o fluxo de suporte ao cliente
+# ------------------------------------------------------------------------------------
+def executar_suporte_ao_cliente(consulta: str) -> Dict[str, str]:
+    """
+    Processa a consulta do cliente através do fluxo de trabalho LangGraph,
+    repassando também o histórico de conversa.
+    """
+    # Formata o histórico para enviar no estado
+    #history_str = format_history(st.session_state.messages)
+    history_str = ""
+    
+    # Monta o dicionário de entrada para o fluxo
+    input_data = {
+        "query": consulta,
+        "categoria": "",  # Inicialmente vazio (será definido no grafo)
+        "resposta": "",   # Inicialmente vazio (será definido no grafo)
+        "history": history_str
+    }
+    resultados = app.invoke(input_data)
+    return {
+        "categoria": resultados["categoria"],
+        "resposta": resultados["resposta"]
+    }
+
 
 #########################################
 # Servidor gRPC (assíncrono)           #
@@ -107,12 +256,13 @@ class GenAiServiceServicer(genai_pb2_grpc.GenAiServiceServicer):
                 answer="Desculpe, sua pergunta contém conteúdo bloqueado."
             )
         try:
-            response_text = conversational_agent.invoke(user_question)
+            response_text = executar_suporte_ao_cliente(user_question)
         except Exception as e:
             return genai_pb2.AnswerResponse(
                 answer=f"Erro ao processar a solicitação: {str(e)}"
             )
-        return genai_pb2.AnswerResponse(answer=response_text['output'])
+        return genai_pb2.AnswerResponse(answer=response_text['resposta'])
+
 
 async def serve():
     server = aio.server()
