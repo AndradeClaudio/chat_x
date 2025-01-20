@@ -1,20 +1,39 @@
 .
+├── Dockerfile
 ├── README.md
+├── app.log
+├── config
+│   ├── config.yml
+│   ├── prompts.yml
+│   └── rails
+│       ├── blocked_terms.co
+│       ├── disallowed_topics.co
+│       ├── greetings.co
+│       └── input_output_checks.co
+├── database.db
 ├── estrutura.txt
-├── hello.py
+├── logs
+│   └── chat_app.log
 ├── pyproject.toml
+├── pytest.ini
 ├── src
 │   └── app
-│       ├── agents
-│       │   └── orchestrator.py
+│       ├── auth.py
+│       ├── authenticate.py
+│       ├── chat.py
 │       ├── client.py
 │       ├── genai.proto
 │       ├── genai_pb2.py
 │       ├── genai_pb2_grpc.py
 │       ├── main.py
-│       └── server.py
+│       ├── message_handler.py
+│       ├── server.py
+│       └── utils.py
+├── start.sh
 ├── tests
-│   └── test_genai.py
+│   └── test_route_query.py
 └── uv.lock
-
-5 directories, 13 files
+.streamlit
+└── config.toml
+.vscode
+└── launch.json

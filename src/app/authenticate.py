@@ -8,7 +8,7 @@ import os
 
 # Constantes
 DATABASE_FILE = "database.db"
-LOG_FILE = "app.log"
+LOG_FILE = "logs/autheticate.log"
 MESSAGE_LIMIT = 20  # Defina o limite de mensagens aqui
 
 # Configuração do Logging
